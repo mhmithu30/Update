@@ -1,1 +1,1 @@
-worker: python 1huntskin_notifier.py
+worker: python combined_notifier.py
