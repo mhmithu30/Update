@@ -43,7 +43,6 @@ def scrape_huntskin():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(HUNTSKIN_URL, headers=headers, timeout=15)
         print(f"Huntskin: {res.status_code}, len: {len(res.text)}")
-
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
 
@@ -57,7 +56,6 @@ def scrape_huntskin():
                 username_match = re.search(r'username\s*[|:]\s*(\S+)', text, re.I)
                 points_match = re.search(r'points\s*[|:]\s*([\d.]+)', text, re.I)
                 type_match = re.search(r'type\s*[|:]?\s*(.+?)(?:\s*\||\s*IP:|$)', text, re.I)
-
                 if username_match:
                     offer = {
                         "site": "huntskin",
@@ -80,43 +78,54 @@ def scrape_apucash():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(APUCASH_URL, headers=headers, timeout=15)
         print(f"Apucash: {res.status_code}, len: {len(res.text)}")
-
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
 
-        # ticker/scrolling banner খোঁজা
-        ticker_items = soup.find_all(class_=re.compile(r'ticker|scroll|live|activity|notification|feed|marquee|banner|recent|win', re.I))
+        # wire:key="offer-XXXXXX" দিয়ে সব offer block খোঁজা
+        offer_blocks = soup.find_all("div", attrs={"wire:key": re.compile(r"^offer-\d+$")})
+        print(f"Apucash offer blocks: {len(offer_blocks)}")
 
-        print(f"Apucash ticker items: {len(ticker_items)}")
+        for block in offer_blocks:
+            offer_id = block.get("wire:key", "")  # e.g. "offer-261986"
 
-        for item in ticker_items:
-            text = item.get_text(separator=" ").strip()
-            if text and len(text) > 3:
-                parts = text.split()
-                offer = {
-                    "site": "apucash",
-                    "raw": text[:100],
-                    "username": parts[-2] if len(parts) >= 2 else "?",
-                    "points": parts[-1] if parts else "?"
-                }
-                offers.append(offer)
+            # offer type (h6)
+            h6 = block.find("h6")
+            offer_type = h6.get_text(strip=True) if h6 else "?"
 
-        # যদি না পাওয়া যায়
-        if not offers:
-            # সব span/div এ username-like pattern খোঁজা
-            all_elements = soup.find_all(["span", "div", "p"])
-            for el in all_elements:
-                text = el.get_text().strip()
-                if re.search(r'\d+🪙|\d+\s*coins|\d+\s*points', text, re.I):
-                    offer = {
-                        "site": "apucash",
-                        "raw": text[:100],
-                        "username": "unknown",
-                        "points": text[:50]
-                    }
-                    offers.append(offer)
+            # username (p.hd tag)
+            p_hd = block.find("p", class_="hd")
+            if p_hd:
+                username = p_hd.get_text(strip=True)
+            else:
+                img = block.find("img")
+                username = img.get("alt", "?") if img else "?"
 
-        print(f"Apucash offers: {len(offers)}")
+            # points (offer-amount div)
+            amount_div = block.find("div", class_="offer-amount")
+            points = amount_div.get_text(strip=True) if amount_div else "?"
+
+            # offer type detect করা
+            if offer_type.lower() in ["apucash"]:
+                activity = "💸 Cashout"
+            elif "sign" in offer_type.lower():
+                activity = "🎁 Sign. Bonus"
+            elif "daily" in offer_type.lower():
+                activity = "📅 Daily Task"
+            elif "adtowall" in offer_type.lower():
+                activity = "📢 Adtowall"
+            else:
+                activity = f"🎮 {offer_type}"
+
+            offers.append({
+                "site": "apucash",
+                "offer_id": offer_id,
+                "username": username,
+                "type": offer_type,
+                "activity": activity,
+                "points": points
+            })
+
+        print(f"Apucash parsed: {len(offers)}")
         return offers
     except Exception as e:
         print(f"Apucash error: {e}")
@@ -124,7 +133,9 @@ def scrape_apucash():
 
 
 def make_key(offer):
-    return f"{offer.get('site','')}_{offer.get('username','')}_{offer.get('points','')}_{offer.get('raw','')[:20]}"
+    if offer.get('site') == "apucash":
+        return f"apu_{offer.get('offer_id', '')}"
+    return f"hunt_{offer.get('username', '')}_{offer.get('points', '')}"
 
 
 def main():
@@ -132,8 +143,8 @@ def main():
     send_telegram(
         "✅ <b>Live Offer Notifier চালু হয়েছে!</b>\n\n"
         "🎯 Monitoring:\n"
-        "• Huntskin Live Offers\n"
-        "• ApuCash Live Offers\n\n"
+        "🔴 Huntskin Live Offers\n"
+        "🟢 ApuCash Live Offers\n\n"
         "নতুন offer আসলে সাথে সাথে জানাবো!"
     )
 
@@ -141,8 +152,6 @@ def main():
 
     while True:
         print(f"\n🔍 চেক করছি... {time.strftime('%H:%M:%S')}")
-
-        # দুটো সাইট চেক
         all_offers = scrape_huntskin() + scrape_apucash()
 
         new_count = 0
@@ -152,10 +161,9 @@ def main():
                 seen.add(key)
                 new_count += 1
 
-                site = offer.get('site', '')
-                if site == "huntskin":
+                if offer.get('site') == "huntskin":
                     msg = (
-                        f"🔔 <b>Huntskin নতুন Offer!</b>\n\n"
+                        f"🔴 <b>Huntskin নতুন Offer!</b>\n\n"
                         f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
                         f"💰 <b>Points:</b> {offer.get('points', 'N/A')}\n"
                         f"📋 <b>Type:</b> {offer.get('type', 'N/A')}\n"
@@ -163,15 +171,15 @@ def main():
                     )
                 else:
                     msg = (
-                        f"🟢 <b>ApuCash নতুন Offer Complete!</b>\n\n"
+                        f"🟢 <b>ApuCash Activity!</b>\n\n"
                         f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
                         f"💰 <b>Points:</b> {offer.get('points', 'N/A')}\n"
-                        f"📋 <b>Info:</b> {offer.get('raw', 'N/A')}\n"
+                        f"📋 <b>Activity:</b> {offer.get('activity', 'N/A')}\n"
                         f"🔗 <a href='{APUCASH_URL}'>ApuCash দেখো</a>"
                     )
 
                 send_telegram(msg)
-                print(f"📨 পাঠানো [{site}]: {offer.get('username')}")
+                print(f"📨 [{offer.get('site')}] {offer.get('username')} - {offer.get('points')}")
 
         if new_count == 0:
             print("নতুন offer নেই।")
