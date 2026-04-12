@@ -3,17 +3,14 @@ from bs4 import BeautifulSoup
 import time
 import json
 import os
+import re
 
-# ==========================================
-# তোমার নিজের Token আর Chat ID এখানে বসাও
-# ==========================================
-BOT_TOKEN = "AAFK1waCKiLv72SErBuf4iK0sduSahJONZo"
-CHAT_ID = "8617551433"
-# ==========================================
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
+CHAT_ID = os.environ.get("CHAT_ID", "8617551433")
 
 URL = "https://huntskin.com/Liveoffersfinal/Live.php"
 SEEN_FILE = "seen_offers.json"
-CHECK_INTERVAL = 60  # প্রতি ৬০ সেকেন্ডে চেক করবে
+CHECK_INTERVAL = 60
 
 
 def load_seen():
@@ -30,56 +27,12 @@ def save_seen(seen):
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        requests.post(url, data=data, timeout=10)
+        r = requests.post(url, data=data, timeout=10)
+        print(f"Telegram: {r.status_code}")
     except Exception as e:
         print(f"Telegram error: {e}")
-
-
-def fetch_offers():
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(URL, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        offers = []
-        cards = soup.find_all("div", class_="card") or soup.find_all("div", style=True)
-
-        # সব text block খোঁজা
-        blocks = soup.get_text(separator="\n").split("\n")
-        blocks = [b.strip() for b in blocks if b.strip()]
-
-        # username দিয়ে group করা
-        current = {}
-        for line in blocks:
-            if line.startswith("username") or "username" in line.lower():
-                if current:
-                    offers.append(current.copy())
-                current = {}
-            if current is not None:
-                if "username" in line.lower() and len(line) < 30:
-                    continue
-                if "points" in line.lower():
-                    current["points"] = line
-                elif "type" in line.lower():
-                    current["type"] = line
-                elif "offer wall" in line.lower():
-                    current["offer_wall"] = line
-                else:
-                    current["username"] = line
-
-        if current:
-            offers.append(current)
-
-        return offers
-    except Exception as e:
-        print(f"Fetch error: {e}")
-        return []
 
 
 def scrape_offers():
@@ -87,25 +40,21 @@ def scrape_offers():
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(URL, headers=headers, timeout=15)
         soup = BeautifulSoup(res.text, "html.parser")
-        
-        offers = []
-        # সব card/row এর মতো div খোঁজা
         all_text = soup.get_text(separator="|||")
-        
-        # প্রতিটা offer এর unique key বানানো
-        import re
+
         usernames = re.findall(r'username\s*\|\|\|([^\|]+)', all_text, re.IGNORECASE)
         points = re.findall(r'Points\s*\|\|\|([^\|]+)', all_text, re.IGNORECASE)
-        types = re.findall(r'type([^\|]+)', all_text, re.IGNORECASE)
-        
+        types = re.findall(r'type([^\|]{5,100})', all_text, re.IGNORECASE)
+
+        offers = []
         for i in range(len(usernames)):
-            offer = {
+            offers.append({
                 "username": usernames[i].strip() if i < len(usernames) else "Unknown",
                 "points": points[i].strip() if i < len(points) else "?",
                 "type": types[i].strip()[:100] if i < len(types) else "?"
-            }
-            offers.append(offer)
-        
+            })
+
+        print(f"Found {len(offers)} offers")
         return offers
     except Exception as e:
         print(f"Scrape error: {e}")
@@ -119,7 +68,7 @@ def make_key(offer):
 def main():
     print("✅ Huntskin Notifier চালু হয়েছে...")
     send_telegram("✅ <b>Huntskin Notifier চালু হয়েছে!</b>\nনতুন Live Offer আসলে এখানে নোটিফিকেশন পাবে।")
-    
+
     seen = load_seen()
 
     while True:
@@ -132,7 +81,6 @@ def main():
             if key not in seen:
                 seen.add(key)
                 new_count += 1
-
                 msg = (
                     f"🔔 <b>নতুন Live Offer!</b>\n\n"
                     f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
@@ -141,10 +89,10 @@ def main():
                     f"🔗 <a href='{URL}'>Live দেখো</a>"
                 )
                 send_telegram(msg)
-                print(f"📨 পাঠানো হয়েছে: {offer.get('username')}")
+                print(f"📨 পাঠানো: {offer.get('username')}")
 
         if new_count == 0:
-            print("কোনো নতুন offer নেই।")
+            print("নতুন offer নেই।")
 
         save_seen(seen)
         time.sleep(CHECK_INTERVAL)
