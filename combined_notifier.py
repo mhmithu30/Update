@@ -8,13 +8,17 @@ import hashlib
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_POINTS = int(os.environ.get("MIN_POINTS", "100"))  # 100 এর নিচে show করবে না
+MIN_POINTS = float(os.environ.get("MIN_POINTS", "100"))
+SPLITDROP_MIN_USD = float(os.environ.get("SPLITDROP_MIN_USD", "0.50"))
 
 HUNTSKIN_URL = "https://huntskin.com/Liveoffersfinal/Live.php"
 APUCASH_URL = "https://apucash.com"
 CASHLYEARN_URL = "https://cashlyearn.com"
+SPLITDROP_URL = "https://splitdrop.com"
 SEEN_FILE = "seen_all_offers.json"
 CHECK_INTERVAL = 60
+
+SPLITDROP_COOKIE = os.environ.get("SPLITDROP_COOKIE", "_ga=GA1.1.1559469763.1737379837; userDataCookey=%7B%22success%22%3Atrue%2C%22id%22%3A89411%2C%22message%22%3A%22User%20signed%20in%22%2C%22balance%22%3A%22%240%22%2C%22token%22%3A%22290111%7ClMJ7jeJ8dbupwIy80HMD3zVZyY5ocY6E9621Xs8L%22%2C%22email%22%3A%22heymithu007%40gmail.com%22%2C%22username%22%3A%22heymithu007%22%7D; _gcl_au=1.1.298454473.1773238041; _ga_9PSQ3Y953S=GS2.1.s1773324576$o12$g1$t1773325254$j60$l0$h0; deviceType=%22Windows%22; LaVisitorId_c3BsaXRkcm9wLmxhZGVzay5jb20v=wji9kzp8jwvi34e3o9gklg0mmntkxdla; users_profile=true; XSRF-TOKEN=eyJpdiI6IndxQXVEb3dnUFVUbzF2V3hxVGRQMVE9PSIsInZhbHVlIjoiNDhQMmNFK2kwcDFxWFNrRnhiV0p6a1VRREpoa3dEbWpidFhRTWlPbnVJVW5pOU1HemRHK3l5RWg0K2V6eWpIUGFVN3diR25USzN6WkFYODZTby8vS2N6S2FLWkdyYkZONFJuSktNRmMwU1d4MEw1TmJ6aG9WMkpETkZwRmJYTTVObGhMWVVwMU5VY2lMQ0p0WVdNaU9pSTBaRGt6TURNd09UaGxNek13T1dRd1pXUXdaR1kwTWpZeE5qSXhJaXd3T1RjNE1EQXdZbVJtT0RabE9EWmtPV0ZrTW1FM1lXSmtPV0ZsWkdZNE1EQXhOemMwWVRFek5UY3hNall3WkRreVpqbGtaRFE1T1dZMVlXUTJNREJoWXpRMllXWmpNV0ppWkdJM05tSmtPR0ZqTnpBNE5XWTVZV1ZtWmpFek9UZzJJaXdpSW4wPSIsIm1hYyI6IjQ4YzMwMzdlNzg0YjM2NGQxNWExYjcyOGZkMTliZjU0ZTNmNGE2OWNmMTQwZDE1NmMxNDMxNjFmMWExMDhkNGEiLCJ0YWciOiIifQ%3D%3D; laravel_session=eyJpdiI6IlRjVnhRQ0daUnpYZCt2V3l1UTZFNHc9PSIsInZhbHVlIjoibFVkb2ZPUURydWU2aWprdkUwb1pjVjVZYlBWVTVFcFNaZ3VUQ2lIbkpNQnJEdks0Vkw0eUttdTJYUS9SMDFQU2dYMzJ2UWthQ1BRMEZjVTlFeTlYRW5sMFErUkV3SXVBdSt2Y3RDODZFMVY3WjVjVVRKL05HdnM0SUdxU1RjQVMiLCJtYWMiOiI2OWRiMzYyYTljZGE5NmM3MDBlNzgwNjU5ZjI5YWMxNWQ5MmE0ZjU2MWViNWU0NWZlNTA1OTM5OTQ0OWFmNjQxIiwidGFnIjoiIn0%3D")
 
 
 def load_seen():
@@ -46,26 +50,21 @@ def scrape_huntskin():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(HUNTSKIN_URL, headers=headers, timeout=15)
         print(f"Huntskin: {res.status_code}, len: {len(res.text)}")
-
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
         rows = soup.find_all("tr")
-
         for row in rows:
             username_td = row.find("td", attrs={"data-label": "username"})
             points_td = row.find("td", attrs={"data-label": "Points"})
             type_td = row.find("td", attrs={"data-label": "type"})
-
             if username_td and points_td:
                 username = username_td.get_text(strip=True)
                 points_str = points_td.get_text(strip=True)
                 offer_type = type_td.get_text(strip=True) if type_td else "?"
-
                 try:
                     points_val = float(points_str)
                 except:
                     points_val = 0
-
                 if username and points_val >= MIN_POINTS:
                     offers.append({
                         "site": "huntskin",
@@ -74,7 +73,6 @@ def scrape_huntskin():
                         "points_val": points_val,
                         "type": offer_type[:80]
                     })
-
         print(f"Huntskin offers: {len(offers)}")
         return offers
     except Exception as e:
@@ -87,11 +85,9 @@ def scrape_apucash():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(APUCASH_URL, headers=headers, timeout=15)
         print(f"Apucash: {res.status_code}, len: {len(res.text)}")
-
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
         offer_blocks = soup.find_all("div", attrs={"wire:key": re.compile(r"^offer-\d+$")})
-
         for block in offer_blocks:
             offer_id = block.get("wire:key", "")
             h6 = block.find("h6")
@@ -100,12 +96,10 @@ def scrape_apucash():
             username = p_hd.get_text(strip=True) if p_hd else (block.find("img") or {}).get("alt", "?")
             amount_div = block.find("div", class_="offer-amount")
             points = amount_div.get_text(strip=True) if amount_div else "?"
-
             try:
                 points_val = float(re.sub(r'[^\d.]', '', points))
             except:
                 points_val = 0
-
             if offer_type.lower() == "apucash":
                 activity = "💸 Cashout"
             elif "sign" in offer_type.lower():
@@ -116,7 +110,6 @@ def scrape_apucash():
                 activity = "📢 Adtowall"
             else:
                 activity = f"🎮 {offer_type}"
-
             if points_val >= MIN_POINTS:
                 offers.append({
                     "site": "apucash",
@@ -127,7 +120,6 @@ def scrape_apucash():
                     "points": points,
                     "points_val": points_val
                 })
-
         print(f"Apucash parsed: {len(offers)}")
         return offers
     except Exception as e:
@@ -140,16 +132,13 @@ def get_cashlyearn_token():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(f"{CASHLYEARN_URL}/earn", headers=headers, timeout=15)
         soup = BeautifulSoup(res.text, "html.parser")
-
         csrf = soup.find("meta", attrs={"name": "csrf-token"})
         csrf_token = csrf.get("content", "") if csrf else ""
-
         live_component = soup.find("div", attrs={"wire:id": True, "x-intersect": True})
         if live_component:
             snapshot_str = live_component.get("wire:snapshot", "")
             wire_id = live_component.get("wire:id", "")
             return csrf_token, wire_id, snapshot_str
-
         return csrf_token, "", ""
     except Exception as e:
         print(f"Cashlyearn token error: {e}")
@@ -162,7 +151,6 @@ def scrape_cashlyearn():
         if not csrf_token or not wire_id:
             print("Cashlyearn: token not found")
             return []
-
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
             "Content-Type": "application/json",
@@ -171,7 +159,6 @@ def scrape_cashlyearn():
             "Referer": f"{CASHLYEARN_URL}/earn",
             "Origin": CASHLYEARN_URL
         }
-
         payload = {
             "_token": csrf_token,
             "components": [{
@@ -180,16 +167,12 @@ def scrape_cashlyearn():
                 "calls": [{"path": "", "method": "__lazyLoad", "params": ["eyJkYXRhIjp7ImZvck1vdW50IjpbW10seyJzIjoiYXJyIn1dfSwibWVtbyI6eyJpZCI6IkRvMUptSml2UHNSTGRtcm1wZzZyIiwibmFtZSI6Il9fbW91bnRQYXJhbXNDb250YWluZXIifSwiY2hlY2tzdW0iOiI0ZWRjNzQ0ZTVkYmM5MjU4NWNjYjRjNTE5NDViZDIzMWU5ZDYwYzkyOGZiZjM3OGI1NTUzYTdjZTk2MTIxZDNlIn0="]}]
             }]
         }
-
         res = requests.post(f"{CASHLYEARN_URL}/livewire/update", headers=headers, json=payload, timeout=15)
         print(f"Cashlyearn: {res.status_code}, len: {len(res.text)}")
-
         if res.status_code != 200:
             return []
-
         data = res.json()
         offers = []
-
         for component in data.get("components", []):
             snap_data = component.get("snapshot", {})
             if isinstance(snap_data, str):
@@ -197,25 +180,21 @@ def scrape_cashlyearn():
                     snap_data = json.loads(snap_data)
                 except:
                     snap_data = {}
-
             live_leads = snap_data.get("data", {}).get("liveLeads", [])
             if isinstance(live_leads, list) and live_leads:
                 for lead in live_leads:
                     if not isinstance(lead, dict):
                         continue
-
                     lead_id = lead.get("id", "")
                     user = lead.get("user", "?")
                     provider = lead.get("provider", "?")
                     offer_name = lead.get("offer_name", "?")
                     reward = lead.get("reward", 0)
                     is_cashout = lead.get("is_cashout", False)
-
                     try:
                         reward_val = float(str(reward))
                     except:
                         reward_val = 0
-
                     if reward_val >= MIN_POINTS:
                         activity = "💸 Cashout" if is_cashout else f"🎮 {provider}"
                         offers.append({
@@ -227,11 +206,66 @@ def scrape_cashlyearn():
                             "points": str(reward),
                             "points_val": reward_val
                         })
-
         print(f"Cashlyearn offers: {len(offers)}")
         return offers
     except Exception as e:
         print(f"Cashlyearn error: {e}")
+        return []
+
+
+def scrape_splitdrop():
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Referer": f"{SPLITDROP_URL}/offers",
+            "X-Requested-With": "XMLHttpRequest",
+            "Cookie": SPLITDROP_COOKIE
+        }
+        res = requests.get(f"{SPLITDROP_URL}/recentEarners", headers=headers, timeout=15)
+        print(f"Splitdrop: {res.status_code}, len: {len(res.text)}")
+
+        soup = BeautifulSoup(res.text, "html.parser")
+        offers = []
+        user_divs = soup.find_all("div", class_="user-detail")
+        print(f"Splitdrop blocks: {len(user_divs)}")
+
+        for div in user_divs:
+            onclick = div.get("onclick", "")
+            user_id_match = re.search(r'showMiniProfile\((\d+)\)', onclick)
+            user_id = user_id_match.group(1) if user_id_match else "?"
+
+            h5 = div.find("h5")
+            provider = h5.get_text(strip=True) if h5 else "?"
+
+            p = div.find("p", class_="text-grey")
+            username = p.get_text(strip=True) if p else "?"
+
+            money_div = div.find("div", class_="user-detail-money")
+            if money_div:
+                full_text = money_div.get_text(strip=True)
+                amount_str = full_text.replace("$", "").replace(" ", "").strip()
+                try:
+                    amount_val = float(amount_str)
+                except:
+                    amount_val = 0
+            else:
+                amount_str = "?"
+                amount_val = 0
+
+            if username and amount_val >= SPLITDROP_MIN_USD:
+                offers.append({
+                    "site": "splitdrop",
+                    "offer_id": f"sd_{user_id}_{amount_str}_{provider}",
+                    "username": username,
+                    "provider": provider,
+                    "amount": f"${amount_str}",
+                    "amount_val": amount_val
+                })
+
+        print(f"Splitdrop offers: {len(offers)}")
+        return offers
+    except Exception as e:
+        print(f"Splitdrop error: {e}")
         return []
 
 
@@ -241,6 +275,9 @@ def make_key(offer):
         return f"apu_{offer.get('offer_id', '')}"
     elif site == "cashlyearn":
         return f"cly_{offer.get('offer_id', '')}"
+    elif site == "splitdrop":
+        raw = offer.get('offer_id', '')
+        return "sd_" + hashlib.md5(raw.encode()).hexdigest()[:12]
     else:
         raw = f"{offer.get('username','')}_{offer.get('points','')}_{offer.get('type','')}"
         return "hunt_" + hashlib.md5(raw.encode()).hexdigest()[:12]
@@ -253,15 +290,16 @@ def main():
         "🎯 Monitoring:\n"
         "🔴 Huntskin\n"
         "🟢 ApuCash\n"
-        "🔵 CashlyEarn\n\n"
-        f"⚡ Min Points: {MIN_POINTS}"
+        "🔵 CashlyEarn\n"
+        "🟡 SplitDrop\n\n"
+        f"⚡ Min Points: {int(MIN_POINTS)} | Min $: ${SPLITDROP_MIN_USD}"
     )
 
     seen = load_seen()
 
     while True:
         print(f"\n🔍 চেক করছি... {time.strftime('%H:%M:%S')}")
-        all_offers = scrape_huntskin() + scrape_apucash() + scrape_cashlyearn()
+        all_offers = scrape_huntskin() + scrape_apucash() + scrape_cashlyearn() + scrape_splitdrop()
 
         new_count = 0
         for offer in all_offers:
@@ -285,7 +323,7 @@ def main():
                         f"💰 <b>Points:</b> {offer.get('points', 'N/A')}\n"
                         f"📋 <b>Activity:</b> {offer.get('activity', 'N/A')}"
                     )
-                else:
+                elif site == "cashlyearn":
                     msg = (
                         f"🔵 <b>CashlyEarn Activity!</b>\n\n"
                         f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
@@ -293,9 +331,16 @@ def main():
                         f"📋 <b>Activity:</b> {offer.get('activity', 'N/A')}\n"
                         f"🎯 <b>Offer:</b> {offer.get('type', 'N/A')[:50]}"
                     )
+                else:
+                    msg = (
+                        f"🟡 <b>SplitDrop নতুন Earning!</b>\n\n"
+                        f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
+                        f"💵 <b>Amount:</b> {offer.get('amount', 'N/A')}\n"
+                        f"📋 <b>Provider:</b> {offer.get('provider', 'N/A')}"
+                    )
 
                 send_telegram(msg)
-                print(f"📨 [{site}] {offer.get('username')} - {offer.get('points')}")
+                print(f"📨 [{site}] {offer.get('username')} - {offer.get('amount', offer.get('points', '?'))}")
 
         if new_count == 0:
             print("নতুন offer নেই।")
