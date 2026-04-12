@@ -6,7 +6,7 @@ import os
 import re
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
-CHAT_ID = os.environ.get("CHAT_ID", "8617551433")
+CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
 
 URL = "https://huntskin.com/Liveoffersfinal/Live.php"
 SEEN_FILE = "seen_offers.json"
