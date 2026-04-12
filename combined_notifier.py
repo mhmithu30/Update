@@ -4,6 +4,7 @@ import time
 import json
 import os
 import re
+import hashlib
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
@@ -43,28 +44,32 @@ def scrape_huntskin():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(HUNTSKIN_URL, headers=headers, timeout=15)
         print(f"Huntskin: {res.status_code}, len: {len(res.text)}")
+
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
 
-        cards = soup.find_all("div", class_=re.compile(r"card|offer|item|row", re.I))
-        if not cards:
-            cards = soup.find_all("div")
+        # HTML table এর প্রতিটা row খোঁজা
+        rows = soup.find_all("tr")
+        print(f"Huntskin rows found: {len(rows)}")
 
-        for card in cards:
-            text = card.get_text(separator=" | ").strip()
-            if "username" in text.lower() and "points" in text.lower():
-                username_match = re.search(r'username\s*[|:]\s*(\S+)', text, re.I)
-                points_match = re.search(r'points\s*[|:]\s*([\d.]+)', text, re.I)
-                type_match = re.search(r'type\s*[|:]?\s*(.+?)(?:\s*\||\s*IP:|$)', text, re.I)
-                if username_match:
-                    offer = {
+        for row in rows:
+            # data-label দিয়ে td খোঁজা
+            username_td = row.find("td", attrs={"data-label": "username"})
+            points_td = row.find("td", attrs={"data-label": "Points"})
+            type_td = row.find("td", attrs={"data-label": "type"})
+
+            if username_td and points_td:
+                username = username_td.get_text(strip=True)
+                points = points_td.get_text(strip=True)
+                offer_type = type_td.get_text(strip=True) if type_td else "?"
+
+                if username:
+                    offers.append({
                         "site": "huntskin",
-                        "username": username_match.group(1).strip(),
-                        "points": points_match.group(1).strip() if points_match else "?",
-                        "type": type_match.group(1).strip()[:80] if type_match else "?"
-                    }
-                    if offer not in offers:
-                        offers.append(offer)
+                        "username": username,
+                        "points": points,
+                        "type": offer_type[:80]
+                    })
 
         print(f"Huntskin offers: {len(offers)}")
         return offers
@@ -78,6 +83,7 @@ def scrape_apucash():
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
         res = requests.get(APUCASH_URL, headers=headers, timeout=15)
         print(f"Apucash: {res.status_code}, len: {len(res.text)}")
+
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
 
@@ -86,13 +92,11 @@ def scrape_apucash():
         print(f"Apucash offer blocks: {len(offer_blocks)}")
 
         for block in offer_blocks:
-            offer_id = block.get("wire:key", "")  # e.g. "offer-261986"
+            offer_id = block.get("wire:key", "")
 
-            # offer type (h6)
             h6 = block.find("h6")
             offer_type = h6.get_text(strip=True) if h6 else "?"
 
-            # username (p.hd tag)
             p_hd = block.find("p", class_="hd")
             if p_hd:
                 username = p_hd.get_text(strip=True)
@@ -100,12 +104,10 @@ def scrape_apucash():
                 img = block.find("img")
                 username = img.get("alt", "?") if img else "?"
 
-            # points (offer-amount div)
             amount_div = block.find("div", class_="offer-amount")
             points = amount_div.get_text(strip=True) if amount_div else "?"
 
-            # offer type detect করা
-            if offer_type.lower() in ["apucash"]:
+            if offer_type.lower() == "apucash":
                 activity = "💸 Cashout"
             elif "sign" in offer_type.lower():
                 activity = "🎁 Sign. Bonus"
@@ -135,7 +137,10 @@ def scrape_apucash():
 def make_key(offer):
     if offer.get('site') == "apucash":
         return f"apu_{offer.get('offer_id', '')}"
-    return f"hunt_{offer.get('username', '')}_{offer.get('points', '')}"
+    else:
+        # huntskin এ unique key: username+points+type hash
+        raw = f"{offer.get('username','')}_{offer.get('points','')}_{offer.get('type','')}"
+        return "hunt_" + hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
 def main():
