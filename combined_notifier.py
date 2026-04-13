@@ -5,11 +5,13 @@ import json
 import os
 import re
 import hashlib
+from collections import Counter
+from datetime import datetime
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_POINTS = float(os.environ.get("MIN_POINTS", "100"))
-SPLITDROP_MIN_USD = float(os.environ.get("SPLITDROP_MIN_USD", "0.50"))
+MIN_POINTS = float(os.environ.get("MIN_POINTS", "101"))
+SPLITDROP_MIN_USD = float(os.environ.get("SPLITDROP_MIN_USD", "0.101"))
 
 HUNTSKIN_URL = "https://huntskin.com/Liveoffersfinal/Live.php"
 APUCASH_URL = "https://apucash.com"
@@ -17,8 +19,14 @@ CASHLYEARN_URL = "https://cashlyearn.com"
 SPLITDROP_URL = "https://splitdrop.com"
 SEEN_FILE = "seen_all_offers.json"
 CHECK_INTERVAL = 60
+SUMMARY_INTERVAL = 7200  # 2 ঘন্টা = 7200 সেকেন্ড
 
 SPLITDROP_COOKIE = os.environ.get("SPLITDROP_COOKIE", "_ga=GA1.1.1559469763.1737379837; userDataCookey=%7B%22success%22%3Atrue%2C%22id%22%3A89411%2C%22message%22%3A%22User%20signed%20in%22%2C%22balance%22%3A%22%240%22%2C%22token%22%3A%22290111%7ClMJ7jeJ8dbupwIy80HMD3zVZyY5ocY6E9621Xs8L%22%2C%22email%22%3A%22heymithu007%40gmail.com%22%2C%22username%22%3A%22heymithu007%22%7D; _gcl_au=1.1.298454473.1773238041; _ga_9PSQ3Y953S=GS2.1.s1773324576$o12$g1$t1773325254$j60$l0$h0; deviceType=%22Windows%22; LaVisitorId_c3BsaXRkcm9wLmxhZGVzay5jb20v=wji9kzp8jwvi34e3o9gklg0mmntkxdla; users_profile=true; XSRF-TOKEN=eyJpdiI6IndxQXVEb3dnUFVUbzF2V3hxVGRQMVE9PSIsInZhbHVlIjoiNDhQMmNFK2kwcDFxWFNrRnhiV0p6a1VRREpoa3dEbWpidFhRTWlPbnVJVW5pOU1HemRHK3l5RWg0K2V6eWpIUGFVN3diR25USzN6WkFYODZTby8vS2N6S2FLWkdyYkZONFJuSktNRmMwU1d4MEw1TmJ6aG9WMkpETkZwRmJYTTVObGhMWVVwMU5VY2lMQ0p0WVdNaU9pSTBaRGt6TURNd09UaGxNek13T1dRd1pXUXdaR1kwTWpZeE5qSXhJaXd3T1RjNE1EQXdZbVJtT0RabE9EWmtPV0ZrTW1FM1lXSmtPV0ZsWkdZNE1EQXhOemMwWVRFek5UY3hNall3WkRreVpqbGtaRFE1T1dZMVlXUTJNREJoWXpRMllXWmpNV0ppWkdJM05tSmtPR0ZqTnpBNE5XWTVZV1ZtWmpFek9UZzJJaXdpSW4wPSIsIm1hYyI6IjQ4YzMwMzdlNzg0YjM2NGQxNWExYjcyOGZkMTliZjU0ZTNmNGE2OWNmMTQwZDE1NmMxNDMxNjFmMWExMDhkNGEiLCJ0YWciOiIifQ%3D%3D; laravel_session=eyJpdiI6IlRjVnhRQ0daUnpYZCt2V3l1UTZFNHc9PSIsInZhbHVlIjoibFVkb2ZPUURydWU2aWprdkUwb1pjVjVZYlBWVTVFcFNaZ3VUQ2lIbkpNQnJEdks0Vkw0eUttdTJYUS9SMDFQU2dYMzJ2UWthQ1BRMEZjVTlFeTlYRW5sMFErUkV3SXVBdSt2Y3RDODZFMVY3WjVjVVRKL05HdnM0SUdxU1RjQVMiLCJtYWMiOiI2OWRiMzYyYTljZGE5NmM3MDBlNzgwNjU5ZjI5YWMxNWQ5MmE0ZjU2MWViNWU0NWZlNTA1OTM5OTQ0OWFmNjQxIiwidGFnIjoiIn0%3D")
+
+# 2 ঘন্টার counter
+huntskin_counter = Counter()
+apucash_counter = Counter()
+last_summary_time = time.time()
 
 
 def load_seen():
@@ -43,6 +51,39 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
+
+
+def send_summary():
+    now = datetime.now().strftime("%H:%M")
+    two_hours_ago = datetime.fromtimestamp(last_summary_time).strftime("%H:%M")
+
+    medals = ["🥇", "🥈", "🥉"]
+    msg = f"📊 <b>Top Offers Report</b>\n<i>({two_hours_ago} - {now})</i>\n\n"
+
+    # Huntskin top 3
+    if huntskin_counter:
+        msg += "🔴 <b>Huntskin:</b>\n"
+        for i, (offer, count) in enumerate(huntskin_counter.most_common(3)):
+            msg += f"{medals[i]} {offer[:40]} → {count} বার\n"
+    else:
+        msg += "🔴 <b>Huntskin:</b> কোনো offer নেই\n"
+
+    msg += "\n"
+
+    # ApuCash top 3
+    if apucash_counter:
+        msg += "🟢 <b>ApuCash:</b>\n"
+        for i, (offer, count) in enumerate(apucash_counter.most_common(3)):
+            msg += f"{medals[i]} {offer[:40]} → {count} বার\n"
+    else:
+        msg += "🟢 <b>ApuCash:</b> কোনো offer নেই\n"
+
+    send_telegram(msg)
+    print("📊 Summary পাঠানো হয়েছে")
+
+    # Counter reset করা
+    huntskin_counter.clear()
+    apucash_counter.clear()
 
 
 def scrape_huntskin():
@@ -223,23 +264,17 @@ def scrape_splitdrop():
         }
         res = requests.get(f"{SPLITDROP_URL}/recentEarners", headers=headers, timeout=15)
         print(f"Splitdrop: {res.status_code}, len: {len(res.text)}")
-
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
         user_divs = soup.find_all("div", class_="user-detail")
-        print(f"Splitdrop blocks: {len(user_divs)}")
-
         for div in user_divs:
             onclick = div.get("onclick", "")
             user_id_match = re.search(r'showMiniProfile\((\d+)\)', onclick)
             user_id = user_id_match.group(1) if user_id_match else "?"
-
             h5 = div.find("h5")
             provider = h5.get_text(strip=True) if h5 else "?"
-
             p = div.find("p", class_="text-grey")
             username = p.get_text(strip=True) if p else "?"
-
             money_div = div.find("div", class_="user-detail-money")
             if money_div:
                 full_text = money_div.get_text(strip=True)
@@ -251,7 +286,6 @@ def scrape_splitdrop():
             else:
                 amount_str = "?"
                 amount_val = 0
-
             if username and amount_val >= SPLITDROP_MIN_USD:
                 offers.append({
                     "site": "splitdrop",
@@ -261,7 +295,6 @@ def scrape_splitdrop():
                     "amount": f"${amount_str}",
                     "amount_val": amount_val
                 })
-
         print(f"Splitdrop offers: {len(offers)}")
         return offers
     except Exception as e:
@@ -284,6 +317,8 @@ def make_key(offer):
 
 
 def main():
+    global last_summary_time
+
     print("✅ Combined Notifier চালু হয়েছে...")
     send_telegram(
         "✅ <b>Live Offer Notifier চালু হয়েছে!</b>\n\n"
@@ -292,10 +327,12 @@ def main():
         "🟢 ApuCash\n"
         "🔵 CashlyEarn\n"
         "🟡 SplitDrop\n\n"
-        f"⚡ Min Points: {int(MIN_POINTS)} | Min $: ${SPLITDROP_MIN_USD}"
+        f"⚡ Min Points: {int(MIN_POINTS)} | Min $: ${SPLITDROP_MIN_USD}\n"
+        "📊 প্রতি ২ ঘন্টায় Top 3 Summary আসবে"
     )
 
     seen = load_seen()
+    last_summary_time = time.time()
 
     while True:
         print(f"\n🔍 চেক করছি... {time.strftime('%H:%M:%S')}")
@@ -309,6 +346,21 @@ def main():
                 new_count += 1
 
                 site = offer.get('site', '')
+
+                # Counter update করা
+                if site == "huntskin":
+                    offer_name = offer.get('type', '?')
+                    # Offer name clean করা (adtowall: Offername: Snakzy → Snakzy)
+                    clean_name = re.sub(r'^.*?Offername:\s*', '', offer_name, flags=re.I).strip()
+                    clean_name = re.sub(r'\s*\.\s*IP:.*$', '', clean_name).strip()
+                    if not clean_name:
+                        clean_name = offer_name[:40]
+                    huntskin_counter[clean_name] += 1
+
+                elif site == "apucash":
+                    apucash_counter[offer.get('type', '?')] += 1
+
+                # Telegram notification
                 if site == "huntskin":
                     msg = (
                         f"🔴 <b>Huntskin নতুন Offer!</b>\n\n"
@@ -344,6 +396,11 @@ def main():
 
         if new_count == 0:
             print("নতুন offer নেই।")
+
+        # ২ ঘন্টা হলে summary পাঠাও
+        if time.time() - last_summary_time >= SUMMARY_INTERVAL:
+            send_summary()
+            last_summary_time = time.time()
 
         save_seen(seen)
         time.sleep(CHECK_INTERVAL)
