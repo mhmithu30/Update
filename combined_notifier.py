@@ -241,7 +241,6 @@ def scrape_splitdrop():
 
 def scrape_cashlyearn():
     """আপনার আগের cashlyearn ফাংশন এখানে বসান"""
-    # আপনার দেওয়া original cashlyearn কোড এখানে কপি করুন
     return []
 
 def make_key(offer):
@@ -298,16 +297,14 @@ def main():
                         f"💰 <b>Points:</b> {offer['points']}\n"
                         f"🏢 <b>Offerwall:</b> {offer.get('offerwall', '?')}\n"
                         f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
-                        f"⏱ <b>Time:</b> {offer.get('time', '?')}\n"
-                        f"🔗 <a href='{APUCASH_URL}'>ApuCash দেখো</a>"
+                        f"⏱ <b>Time:</b> {offer.get('time', '?')}"
                     )
                 elif site == "apucash":
                     msg = (
                         f"🟢 <b>ApuCash Activity! (Private)</b>\n\n"
                         f"👤 <b>Username:</b> {offer['username']}\n"
                         f"💰 <b>Points:</b> {offer['points']}\n"
-                        f"📋 <b>Activity:</b> {offer.get('activity', '?')}\n"
-                        f"🔗 <a href='{APUCASH_URL}'>ApuCash দেখো</a>"
+                        f"📋 <b>Activity:</b> {offer.get('activity', '?')}"
                     )
                 elif site == "paidcash":
                     msg = (
@@ -315,30 +312,26 @@ def main():
                         f"🏢 <b>Offerwall:</b> {offer.get('offerwall', '?')}\n"
                         f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
                         f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
-                        f"💰 <b>Points:</b> {offer.get('points', '?')}\n"
-                        f"🔗 <a href='{PAIDCASH_URL}'>PaidCash দেখো</a>"
+                        f"💰 <b>Points:</b> {offer.get('points', '?')}"
                     )
                 elif site == "splitdrop":
                     msg = (
                         f"🟠 <b>SplitDrop (${SPLITDROP_MIN}+ Offer)</b>\n\n"
                         f"📋 <b>Offer:</b> {offer['offer_name']}\n"
-                        f"💰 <b>Reward:</b> {offer['points']}\n"
-                        f"🔗 <a href='{SPLITDROP_URL}'>SplitDrop দেখো</a>"
+                        f"💰 <b>Reward:</b> {offer['points']}"
                     )
                 elif site == "huntskin":
                     msg = (
                         f"🔴 <b>Huntskin নতুন Offer!</b>\n\n"
                         f"👤 <b>Username:</b> {offer['username']}\n"
                         f"💰 <b>Points:</b> {offer['points']}\n"
-                        f"📋 <b>Type:</b> {offer['type']}\n"
-                        f"🔗 <a href='{HUNTSKIN_URL}'>Huntskin দেখো</a>"
+                        f"📋 <b>Type:</b> {offer['type']}"
                     )
                 else:  # cashlyearn
                     msg = (
                         f"🔵 <b>CashlyEarn Activity!</b>\n\n"
                         f"👤 <b>Username:</b> {offer.get('username', 'N/A')}\n"
-                        f"💰 <b>Reward:</b> {offer.get('points', 'N/A')}\n"
-                        f"🔗 <a href='{CASHLYEARN_URL}'>CashlyEarn দেখো</a>"
+                        f"💰 <b>Reward:</b> {offer.get('points', 'N/A')}"
                     )
 
                 send_telegram(msg)
