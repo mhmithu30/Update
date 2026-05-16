@@ -1,5 +1,0 @@
-.env
-seen_all_offers.json
-__pycache__/
-*.pyc
-.DS_Store
