@@ -16,9 +16,10 @@ MIN_POINTS = float(os.environ.get("MIN_POINTS", "200"))
 SEEN_FILE = "seen_offers.json"
 HEADERS   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
 
-# ========== SEEN ==========
 seen = set()
+seen_lock = threading.Lock()
 
+# ========== SEEN ==========
 def load_seen():
     global seen
     if os.path.exists(SEEN_FILE):
@@ -26,8 +27,9 @@ def load_seen():
             seen = set(json.load(f))
 
 def save_seen():
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f)
+    with seen_lock:
+        with open(SEEN_FILE, "w") as f:
+            json.dump(list(seen), f)
 
 def make_key(*parts):
     return hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
@@ -46,12 +48,15 @@ def send(msg):
 # ========== HUNTSKIN ==========
 def scrape_huntskin():
     try:
-        res = requests.get("https://huntskin.com/Liveoffersfinal/Live.php", headers=HEADERS, timeout=15)
+        res = requests.get(
+            "https://huntskin.com/Liveoffersfinal/Live.php",
+            headers=HEADERS, timeout=15
+        )
         soup = BeautifulSoup(res.text, "html.parser")
         for row in soup.find_all("tr"):
-            u  = row.find("td", attrs={"data-label": "username"})
-            p  = row.find("td", attrs={"data-label": "Points"})
-            t  = row.find("td", attrs={"data-label": "type"})
+            u = row.find("td", attrs={"data-label": "username"})
+            p = row.find("td", attrs={"data-label": "Points"})
+            t = row.find("td", attrs={"data-label": "type"})
             if not (u and p):
                 continue
             username   = u.get_text(strip=True)
@@ -86,11 +91,8 @@ def scrape_apucash():
         res = requests.get("https://apucash.com", headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # Strategy 1: wire:key activity blocks
         blocks = soup.find_all(lambda tag: tag.has_attr("wire:key") and
                                re.match(r"activity-\d+", tag.get("wire:key", "")))
-
-        # Strategy 2: fallback class search
         if not blocks:
             blocks = soup.find_all(class_=re.compile(r"activity-item|feed-item|offer-row"))
 
@@ -128,7 +130,7 @@ def apucash_loop():
         scrape_apucash()
         time.sleep(60)
 
-# ========== PAIDCASH (Socket.io) ==========
+# ========== PAIDCASH ==========
 sio = socketio.Client(logger=False, engineio_logger=False)
 
 @sio.event
@@ -139,22 +141,28 @@ def connect():
 def disconnect():
     print("[PaidCash] Disconnected!")
 
-@sio.on("*")
-def on_event(event, data):
+@sio.on("activityFeed")
+def on_activity(data):
     try:
-        if event == "activityFeed":
-            print(f"[DEBUG] {json.dumps(data)[:300]}")
-        text = json.dumps(data) ...
-        pts_match = re.search(r"(\d+(?:\.\d+)?)", text)
-        pts_val = float(pts_match.group(1)) if pts_match else 0
+        print(f"[DEBUG] {json.dumps(data)[:300]}")
+
+        if not isinstance(data, dict):
+            return
+
+        # সব সম্ভাব্য coin/points key চেক
+        coins = (data.get("coins") or data.get("points") or
+                 data.get("amount") or data.get("reward") or 0)
+        pts_val = float(re.sub(r"[^\d.]", "", str(coins)) or "0")
+
         if pts_val < MIN_POINTS:
             return
-        offerwall = "?"
-        username  = "?"
-        if isinstance(data, dict):
-            offerwall = data.get("offerwall", data.get("wall", data.get("source", "?")))
-            username  = data.get("username", data.get("user", "?"))
-        key = make_key("pc", event, offerwall, username, pts_val)
+
+        offerwall = (data.get("offerwall") or data.get("wall") or
+                     data.get("source") or data.get("provider") or "?")
+        username  = (data.get("username") or data.get("user") or
+                     data.get("name") or "?")
+
+        key = make_key("pc", offerwall, username, pts_val)
         if key in seen:
             return
         seen.add(key)
@@ -163,11 +171,11 @@ def on_event(event, data):
             f"🪙 <b>PaidCash!</b>\n"
             f"🏢 <b>Offerwall:</b> {offerwall}\n"
             f"👤 <b>User:</b> {username}\n"
-            f"💰 <b>Coins:</b> {pts_val}"
+            f"💰 <b>Coins:</b> {int(pts_val)}"
         )
-        print(f"[PaidCash] {event} - {username} - {pts_val}")
+        print(f"[PaidCash] {username} - {pts_val}")
     except Exception as e:
-        print(f"[PaidCash handler] {e}")
+        print(f"[PaidCash] {e}")
 
 def paidcash_loop():
     while True:
@@ -179,7 +187,7 @@ def paidcash_loop():
             )
             sio.wait()
         except Exception as e:
-            print(f"[PaidCash] {e}")
+            print(f"[PaidCash connect] {e}")
             time.sleep(10)
 
 # ========== MAIN ==========
