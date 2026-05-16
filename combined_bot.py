@@ -7,6 +7,9 @@ import re
 import time
 import threading
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 # ========== CONFIG ==========
 BOT_TOKEN  = os.environ.get("BOT_TOKEN",  "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
@@ -15,12 +18,10 @@ MIN_POINTS = float(os.environ.get("MIN_POINTS", "200"))
 
 SEEN_FILE = "seen_offers.json"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# Blocklist
 BLOCKLIST = ["cpx research", "theoremreach", "cpx", "theorem", "pollfish", "survey"]
 
 seen = set()
@@ -54,6 +55,18 @@ def send(msg):
         )
     except Exception as e:
         print(f"[TG] {e}")
+
+# ========== SELENIUM DRIVER ==========
+def get_driver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.binary_location = "/usr/bin/chromium"
+    service = Service("/usr/bin/chromedriver")
+    return webdriver.Chrome(service=service, options=options)
 
 # ========== HUNTSKIN ==========
 def scrape_huntskin():
@@ -97,98 +110,55 @@ def huntskin_loop():
         scrape_huntskin()
         time.sleep(60)
 
-# ========== APUCASH ==========
+# ========== APUCASH (Selenium) ==========
 def scrape_apucash():
-    urls_to_try = [
-        "https://apucash.com",
-        "https://apucash.com/activity",
-        "https://apucash.com/offers",
-    ]
-    html = None
-    for url in urls_to_try:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            if r.ok and len(r.text) > 500:
-                html = r.text
-                break
-        except Exception as e:
-            print(f"[ApuCash] Failed {url}: {e}")
+    driver = None
+    try:
+        driver = get_driver()
+        driver.get("https://apucash.com")
+        time.sleep(5)  # JS load হতে দাও
 
-    if not html:
-        print("[ApuCash] Could not fetch any page")
-        return
+        soup = BeautifulSoup(driver.page_source, "html.parser")
 
-    soup = BeautifulSoup(html, "html.parser")
-
-    activity_blocks = soup.find_all(
-        lambda tag: tag.has_attr("wire:key") and
-        re.match(r"activity-\d+", tag.get("wire:key", ""))
-    )
-
-    for block in activity_blocks:
-        try:
-            user_el = (
-                block.find(class_="username") or
-                block.find(class_="user-name") or
-                block.find("a", href=re.compile(r"/user/")) or
-                block.find("span", class_=re.compile(r"user"))
-            )
-            username = user_el.get_text(strip=True) if user_el else "?"
-
-            offer_el = (
-                block.find(class_="offer-name") or
-                block.find(class_="activity-name") or
-                block.find("h5") or
-                block.find("h6") or
-                block.find("p", class_=re.compile(r"title|name"))
-            )
-            offer = offer_el.get_text(strip=True) if offer_el else "?"
-
-            if is_blocked(offer):
-                continue
-
-            pts_el = (
-                block.find(class_=re.compile(r"point|coin|reward|amount")) or
-                block.find("span", class_=re.compile(r"pts|coins"))
-            )
-            pts_text = pts_el.get_text(strip=True) if pts_el else "0"
-            pts_val  = float(re.sub(r"[^\d.]", "", pts_text) or "0")
-
-            if pts_val < MIN_POINTS:
-                continue
-
-            key = make_key("apu", username, offer, pts_text)
-            if key in seen:
-                continue
-            seen.add(key)
-            save_seen()
-            send(
-                f"🟢 <b>ApuCash!</b>\n"
-                f"👤 <b>User:</b> {username}\n"
-                f"🎯 <b>Offer:</b> {offer}\n"
-                f"💰 <b>Points:</b> {pts_text}"
-            )
-            print(f"[ApuCash] {username} - {pts_text}")
-        except Exception:
-            pass
-
-    if not activity_blocks:
-        feed_items = (
-            soup.find_all(class_=re.compile(r"activity-item|feed-item|offer-row|earn-item")) or
-            soup.find_all("li", class_=re.compile(r"activity|offer"))
+        activity_blocks = soup.find_all(
+            lambda tag: tag.has_attr("wire:key") and
+            re.match(r"activity-\d+", tag.get("wire:key", ""))
         )
-        for item in feed_items:
+
+        print(f"[ApuCash] Found {len(activity_blocks)} blocks")
+
+        for block in activity_blocks:
             try:
-                texts = [t.get_text(strip=True) for t in item.find_all(True) if t.get_text(strip=True)]
-                username = texts[0] if texts else "?"
-                offer    = texts[1] if len(texts) > 1 else "?"
+                user_el = (
+                    block.find(class_="username") or
+                    block.find(class_="user-name") or
+                    block.find("a", href=re.compile(r"/user/")) or
+                    block.find("span", class_=re.compile(r"user"))
+                )
+                username = user_el.get_text(strip=True) if user_el else "?"
+
+                offer_el = (
+                    block.find(class_="offer-name") or
+                    block.find(class_="activity-name") or
+                    block.find("h5") or
+                    block.find("h6") or
+                    block.find("p", class_=re.compile(r"title|name"))
+                )
+                offer = offer_el.get_text(strip=True) if offer_el else "?"
+
                 if is_blocked(offer):
                     continue
-                pts_match = re.search(r"(\d+(?:\.\d+)?)", item.get_text())
-                pts_val  = float(pts_match.group(1)) if pts_match else 0
-                pts_text = pts_match.group(0) if pts_match else "0"
+
+                pts_el = (
+                    block.find(class_=re.compile(r"point|coin|reward|amount")) or
+                    block.find("span", class_=re.compile(r"pts|coins"))
+                )
+                pts_text = pts_el.get_text(strip=True) if pts_el else "0"
+                pts_val  = float(re.sub(r"[^\d.]", "", pts_text) or "0")
+
                 if pts_val < MIN_POINTS:
                     continue
+
                 key = make_key("apu", username, offer, pts_text)
                 if key in seen:
                     continue
@@ -203,6 +173,12 @@ def scrape_apucash():
                 print(f"[ApuCash] {username} - {pts_text}")
             except Exception:
                 pass
+
+    except Exception as e:
+        print(f"[ApuCash] {e}")
+    finally:
+        if driver:
+            driver.quit()
 
 def apucash_loop():
     while True:
