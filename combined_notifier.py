@@ -1,29 +1,39 @@
-import socketio
 import requests
+import socketio
 import hashlib
 import json
 import os
 import re
 import time
+import threading
+from bs4 import BeautifulSoup
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
-CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_COINS = int(os.environ.get("MIN_COINS", "200"))
-SEEN_FILE = "seen_paidcash.json"
+# ========== CONFIG ==========
+BOT_TOKEN  = os.environ.get("BOT_TOKEN",  "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
+CHAT_ID    = os.environ.get("CHAT_ID",    "6881373105")
+MIN_POINTS = float(os.environ.get("MIN_POINTS", "200"))
 
-SURVEY_BLOCK = ["theoremreach", "cpx research", "pollfish", "survey"]
+SEEN_FILE = "seen_offers.json"
+HEADERS   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
+
+# ========== SEEN ==========
+seen = set()
 
 def load_seen():
+    global seen
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    return set()
+            seen = set(json.load(f))
 
-def save_seen(seen):
+def save_seen():
     with open(SEEN_FILE, "w") as f:
         json.dump(list(seen), f)
 
-def send_telegram(msg):
+def make_key(*parts):
+    return hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
+
+# ========== TELEGRAM ==========
+def send(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -31,54 +41,133 @@ def send_telegram(msg):
             timeout=10
         )
     except Exception as e:
-        print(f"TG error: {e}")
+        print(f"[TG] {e}")
 
-seen = load_seen()
+# ========== HUNTSKIN ==========
+def scrape_huntskin():
+    try:
+        res = requests.get("https://huntskin.com/Liveoffersfinal/Live.php", headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, "html.parser")
+        for row in soup.find_all("tr"):
+            u  = row.find("td", attrs={"data-label": "username"})
+            p  = row.find("td", attrs={"data-label": "Points"})
+            t  = row.find("td", attrs={"data-label": "type"})
+            if not (u and p):
+                continue
+            username   = u.get_text(strip=True)
+            pts_str    = p.get_text(strip=True)
+            offer_type = t.get_text(strip=True) if t else "?"
+            pts_val    = float(re.sub(r"[^\d.]", "", pts_str) or "0")
+            if pts_val < MIN_POINTS:
+                continue
+            key = make_key("hs", username, pts_str, offer_type)
+            if key in seen:
+                continue
+            seen.add(key)
+            save_seen()
+            send(
+                f"🔴 <b>Huntskin!</b>\n"
+                f"👤 <b>User:</b> {username}\n"
+                f"💰 <b>Points:</b> {pts_str}\n"
+                f"📋 <b>Offer:</b> {offer_type[:100]}"
+            )
+            print(f"[Huntskin] {username} - {pts_str}")
+    except Exception as e:
+        print(f"[Huntskin] {e}")
+
+def huntskin_loop():
+    while True:
+        scrape_huntskin()
+        time.sleep(60)
+
+# ========== APUCASH ==========
+def scrape_apucash():
+    try:
+        res = requests.get("https://apucash.com", headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        # Strategy 1: wire:key activity blocks
+        blocks = soup.find_all(lambda tag: tag.has_attr("wire:key") and
+                               re.match(r"activity-\d+", tag.get("wire:key", "")))
+
+        # Strategy 2: fallback class search
+        if not blocks:
+            blocks = soup.find_all(class_=re.compile(r"activity-item|feed-item|offer-row"))
+
+        for block in blocks:
+            try:
+                text = block.get_text(" ", strip=True)
+                pts_match = re.search(r"(\d+(?:\.\d+)?)", text)
+                if not pts_match:
+                    continue
+                pts_val = float(pts_match.group(1))
+                if pts_val < MIN_POINTS:
+                    continue
+                user_el = (block.find(class_=re.compile(r"user|name")) or
+                           block.find("a") or block.find("span"))
+                username = user_el.get_text(strip=True) if user_el else "?"
+                key = make_key("apu", username, pts_match.group(0), text[:30])
+                if key in seen:
+                    continue
+                seen.add(key)
+                save_seen()
+                send(
+                    f"🟢 <b>ApuCash!</b>\n"
+                    f"👤 <b>User:</b> {username}\n"
+                    f"💰 <b>Points:</b> {pts_match.group(0)}\n"
+                    f"📋 <b>Info:</b> {text[:80]}"
+                )
+                print(f"[ApuCash] {username} - {pts_match.group(0)}")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[ApuCash] {e}")
+
+def apucash_loop():
+    while True:
+        scrape_apucash()
+        time.sleep(60)
+
+# ========== PAIDCASH (Socket.io) ==========
 sio = socketio.Client(logger=False, engineio_logger=False)
 
 @sio.event
 def connect():
-    print("Connected!")
-    send_telegram("✅ <b>PaidCash Bot চালু!</b>\n🪙 Min coins: " + str(MIN_COINS))
+    print("[PaidCash] Connected!")
 
 @sio.event
 def disconnect():
-    print("Disconnected!")
+    print("[PaidCash] Disconnected!")
 
 @sio.on("*")
-def catch_all(event, data):
-    print(f"[{event}] {str(data)[:200]}")
+def on_event(event, data):
     try:
         text = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
         pts_match = re.search(r"(\d+(?:\.\d+)?)", text)
         pts_val = float(pts_match.group(1)) if pts_match else 0
-        if pts_val < MIN_COINS:
+        if pts_val < MIN_POINTS:
             return
-
-        offerwall = data.get("offerwall", data.get("wall", data.get("source", "?"))) if isinstance(data, dict) else "?"
-        if any(b in str(offerwall).lower() for b in SURVEY_BLOCK):
-            return
-
-        username = data.get("username", data.get("user", "?")) if isinstance(data, dict) else "?"
-        coins = data.get("coins", data.get("points", data.get("amount", pts_val))) if isinstance(data, dict) else pts_val
-
-        key = hashlib.md5(f"{event}_{offerwall}_{username}_{coins}".encode()).hexdigest()
+        offerwall = "?"
+        username  = "?"
+        if isinstance(data, dict):
+            offerwall = data.get("offerwall", data.get("wall", data.get("source", "?")))
+            username  = data.get("username", data.get("user", "?"))
+        key = make_key("pc", event, offerwall, username, pts_val)
         if key in seen:
             return
         seen.add(key)
-        save_seen(seen)
-
-        send_telegram(
+        save_seen()
+        send(
             f"🪙 <b>PaidCash!</b>\n"
-            f"🎯 <b>Event:</b> {event}\n"
             f"🏢 <b>Offerwall:</b> {offerwall}\n"
             f"👤 <b>User:</b> {username}\n"
-            f"💰 <b>Coins:</b> {coins}"
+            f"💰 <b>Coins:</b> {pts_val}"
         )
+        print(f"[PaidCash] {event} - {username} - {pts_val}")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[PaidCash handler] {e}")
 
-def main():
+def paidcash_loop():
     while True:
         try:
             sio.connect(
@@ -88,8 +177,22 @@ def main():
             )
             sio.wait()
         except Exception as e:
-            print(f"Connection error: {e}")
+            print(f"[PaidCash] {e}")
             time.sleep(10)
+
+# ========== MAIN ==========
+def main():
+    load_seen()
+    send(
+        "✅ <b>Combined Bot চালু!</b>\n"
+        "🔴 Huntskin\n"
+        "🟢 ApuCash\n"
+        "🪙 PaidCash\n"
+        f"💎 Min Points: {int(MIN_POINTS)}"
+    )
+    threading.Thread(target=huntskin_loop, daemon=True).start()
+    threading.Thread(target=apucash_loop, daemon=True).start()
+    paidcash_loop()
 
 if __name__ == "__main__":
     main()
