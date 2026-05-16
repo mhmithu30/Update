@@ -1,22 +1,17 @@
+import socketio
 import requests
-from bs4 import BeautifulSoup
-import time
+import hashlib
 import json
 import os
 import re
-import hashlib
+import time
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
 MIN_COINS = int(os.environ.get("MIN_COINS", "20"))
-CHECK_INTERVAL = 60
 SEEN_FILE = "seen_paidcash.json"
 
 SURVEY_BLOCK = ["theoremreach", "cpx research", "pollfish", "survey"]
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-}
 
 def load_seen():
     if os.path.exists(SEEN_FILE):
@@ -38,55 +33,63 @@ def send_telegram(msg):
     except Exception as e:
         print(f"TG error: {e}")
 
-def scrape():
-    offers = []
+seen = load_seen()
+sio = socketio.Client(logger=False, engineio_logger=False)
+
+@sio.event
+def connect():
+    print("Connected!")
+    send_telegram("✅ <b>PaidCash Bot চালু!</b>\n🪙 Min coins: " + str(MIN_COINS))
+
+@sio.event
+def disconnect():
+    print("Disconnected!")
+
+@sio.on("*")
+def catch_all(event, data):
+    print(f"[{event}] {str(data)[:200]}")
     try:
-        res = requests.get("https://paidcash.co", headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
-        items = soup.find_all("div", class_="earning-feed-item")
-        for item in items:
-            try:
-                title = item.find("p", class_="earning-feed-item-content-title")
-                offerwall = title.get_text(strip=True) if title else ""
-                if any(b in offerwall.lower() for b in SURVEY_BLOCK):
-                    continue
-                desc = item.find("p", class_="earning-feed-item-content-description")
-                username = desc.get_text(strip=True) if desc else "?"
-                pts_el = item.find("p", class_="earning-feed-item-reward-amount")
-                pts_str = pts_el.get_text(strip=True) if pts_el else "0"
-                pts_val = float(re.sub(r"[^\d.]", "", pts_str) or "0")
-                if pts_val < MIN_COINS:
-                    continue
-                offers.append({
-                    "offerwall": offerwall,
-                    "username": username,
-                    "points": pts_str,
-                    "pts_val": pts_val
-                })
-            except:
-                continue
+        text = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
+        pts_match = re.search(r"(\d+(?:\.\d+)?)", text)
+        pts_val = float(pts_match.group(1)) if pts_match else 0
+        if pts_val < MIN_COINS:
+            return
+
+        offerwall = data.get("offerwall", data.get("wall", data.get("source", "?"))) if isinstance(data, dict) else "?"
+        if any(b in str(offerwall).lower() for b in SURVEY_BLOCK):
+            return
+
+        username = data.get("username", data.get("user", "?")) if isinstance(data, dict) else "?"
+        coins = data.get("coins", data.get("points", data.get("amount", pts_val))) if isinstance(data, dict) else pts_val
+
+        key = hashlib.md5(f"{event}_{offerwall}_{username}_{coins}".encode()).hexdigest()
+        if key in seen:
+            return
+        seen.add(key)
+        save_seen(seen)
+
+        send_telegram(
+            f"🪙 <b>PaidCash!</b>\n"
+            f"🎯 <b>Event:</b> {event}\n"
+            f"🏢 <b>Offerwall:</b> {offerwall}\n"
+            f"👤 <b>User:</b> {username}\n"
+            f"💰 <b>Coins:</b> {coins}"
+        )
     except Exception as e:
-        print(f"Scrape error: {e}")
-    return offers
+        print(f"Error: {e}")
 
 def main():
-    send_telegram("✅ <b>PaidCash Bot চালু!</b>\n🪙 Min coins: " + str(MIN_COINS))
-    seen = load_seen()
     while True:
-        offers = scrape()
-        print(f"[{time.strftime('%H:%M:%S')}] Found: {len(offers)}")
-        for o in offers:
-            key = hashlib.md5(f"{o['offerwall']}_{o['username']}_{o['points']}".encode()).hexdigest()
-            if key not in seen:
-                seen.add(key)
-                send_telegram(
-                    f"🪙 <b>PaidCash!</b>\n"
-                    f"🏢 <b>Offerwall:</b> {o['offerwall']}\n"
-                    f"👤 <b>User:</b> {o['username']}\n"
-                    f"💰 <b>Coins:</b> {o['points']}"
-                )
-        save_seen(seen)
-        time.sleep(CHECK_INTERVAL)
+        try:
+            sio.connect(
+                "https://servers.faucetify.io",
+                socketio_path="/socket.io/",
+                transports=["websocket", "polling"]
+            )
+            sio.wait()
+        except Exception as e:
+            print(f"Connection error: {e}")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
