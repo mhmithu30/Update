@@ -20,6 +20,9 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+# Blocklist
+BLOCKLIST = ["cpx research", "theoremreach", "cpx", "theorem", "pollfish", "survey"]
+
 seen = set()
 seen_lock = threading.Lock()
 
@@ -37,6 +40,9 @@ def save_seen():
 
 def make_key(*parts):
     return hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest()
+
+def is_blocked(text):
+    return any(b in str(text).lower() for b in BLOCKLIST)
 
 # ========== TELEGRAM ==========
 def send(msg):
@@ -66,7 +72,9 @@ def scrape_huntskin():
             username   = u.get_text(strip=True)
             pts_str    = p.get_text(strip=True)
             offer_type = t.get_text(strip=True) if t else "?"
-            pts_val    = float(re.sub(r"[^\d.]", "", pts_str) or "0")
+            if is_blocked(offer_type):
+                continue
+            pts_val = float(re.sub(r"[^\d.]", "", pts_str) or "0")
             if pts_val < MIN_POINTS:
                 continue
             key = make_key("hs", username, pts_str, offer_type)
@@ -112,7 +120,6 @@ def scrape_apucash():
 
     soup = BeautifulSoup(html, "html.parser")
 
-    # Strategy 1: wire:key activity blocks
     activity_blocks = soup.find_all(
         lambda tag: tag.has_attr("wire:key") and
         re.match(r"activity-\d+", tag.get("wire:key", ""))
@@ -136,6 +143,9 @@ def scrape_apucash():
                 block.find("p", class_=re.compile(r"title|name"))
             )
             offer = offer_el.get_text(strip=True) if offer_el else "?"
+
+            if is_blocked(offer):
+                continue
 
             pts_el = (
                 block.find(class_=re.compile(r"point|coin|reward|amount")) or
@@ -162,7 +172,6 @@ def scrape_apucash():
         except Exception:
             pass
 
-    # Strategy 2: fallback
     if not activity_blocks:
         feed_items = (
             soup.find_all(class_=re.compile(r"activity-item|feed-item|offer-row|earn-item")) or
@@ -173,6 +182,8 @@ def scrape_apucash():
                 texts = [t.get_text(strip=True) for t in item.find_all(True) if t.get_text(strip=True)]
                 username = texts[0] if texts else "?"
                 offer    = texts[1] if len(texts) > 1 else "?"
+                if is_blocked(offer):
+                    continue
                 pts_match = re.search(r"(\d+(?:\.\d+)?)", item.get_text())
                 pts_val  = float(pts_match.group(1)) if pts_match else 0
                 pts_text = pts_match.group(0) if pts_match else "0"
@@ -212,18 +223,19 @@ def disconnect():
 @sio.on("activityFeed")
 def on_activity(data):
     try:
-        print(f"[DEBUG] {json.dumps(data)[:300]}")
         if not isinstance(data, dict):
+            return
+        offerwall = (data.get("offerwall") or data.get("wall") or
+                     data.get("source") or data.get("provider") or "?")
+        if is_blocked(offerwall):
             return
         coins = (data.get("coins") or data.get("points") or
                  data.get("amount") or data.get("reward") or 0)
         pts_val = float(re.sub(r"[^\d.]", "", str(coins)) or "0")
         if pts_val < MIN_POINTS:
             return
-        offerwall = (data.get("offerwall") or data.get("wall") or
-                     data.get("source") or data.get("provider") or "?")
-        username  = (data.get("username") or data.get("user") or
-                     data.get("name") or "?")
+        username = (data.get("username") or data.get("user") or
+                    data.get("name") or "?")
         key = make_key("pc", offerwall, username, pts_val)
         if key in seen:
             return
@@ -260,7 +272,8 @@ def main():
         "🔴 Huntskin\n"
         "🟢 ApuCash\n"
         "🪙 PaidCash\n"
-        f"💎 Min Points: {int(MIN_POINTS)}"
+        f"💎 Min Points: {int(MIN_POINTS)}\n"
+        f"🚫 Blocked: CPX Research, TheoremReach"
     )
     threading.Thread(target=huntskin_loop, daemon=True).start()
     threading.Thread(target=apucash_loop, daemon=True).start()
