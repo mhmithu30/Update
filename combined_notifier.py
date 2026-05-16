@@ -8,7 +8,7 @@ import hashlib
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_COINS = int(os.environ.get("MIN_COINS", "200"))
+MIN_COINS = int(os.environ.get("MIN_COINS", "20"))
 CHECK_INTERVAL = 60
 SEEN_FILE = "seen_paidcash.json"
 
