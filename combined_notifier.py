@@ -142,7 +142,9 @@ def disconnect():
 @sio.on("*")
 def on_event(event, data):
     try:
-        text = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
+        if event == "activityFeed":
+            print(f"[DEBUG] {json.dumps(data)[:300]}")
+        text = json.dumps(data) ...
         pts_match = re.search(r"(\d+(?:\.\d+)?)", text)
         pts_val = float(pts_match.group(1)) if pts_match else 0
         if pts_val < MIN_POINTS:
