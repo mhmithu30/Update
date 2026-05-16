@@ -9,7 +9,7 @@ import hashlib
 # ========== এনভায়রনমেন্ট ভেরিয়েবল ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo")
 CHAT_ID = os.environ.get("CHAT_ID", "6881373105")
-MIN_POINTS = int(os.environ.get("MIN_POINTS", "0"))
+MIN_POINTS = int(os.environ.get("MIN_POINTS", "400"))
 SPLITDROP_MIN = float(os.environ.get("SPLITDROP_MIN", "3.00"))
 PAIDCASH_MIN_POINTS = int(os.environ.get("PAIDCASH_MIN_POINTS", "200"))
 
@@ -83,185 +83,92 @@ def scrape_huntskin():
         return []
 
 def scrape_apucash():
-    """আপডেটেড ApuCash স্ক্র্যাপার - বাগ ফিক্স করা হয়েছে"""
+    """ApuCash - শুধু 400+ পয়েন্টস দেখাবে"""
     try:
+        print("🔍 ApuCash চেক করা হচ্ছে...")
+        
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Referer": "https://apucash.com/",
-            "Cache-Control": "no-cache"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         
-        print("Connecting to ApuCash...")
-        res = requests.get(APUCASH_URL, headers=headers, timeout=20)
-        print(f"ApuCash Status: {res.status_code}")
+        res = requests.get(APUCASH_URL, headers=headers, timeout=15)
         
         if res.status_code != 200:
-            print(f"ApuCash returned {res.status_code}")
+            print(f"⚠️ ApuCash HTTP {res.status_code}")
+            return []
+        
+        offers = []
+        text = res.text
+        
+        # প্যাটার্ন 1: username + points
+        pattern1 = r'([A-Za-z0-9_]{3,25}).*?(\d+(?:\.\d+)?)\s*(?:points?|coins?)'
+        matches1 = re.findall(pattern1, text, re.I)
+        
+        for username, points in matches1:
+            points_val = float(points)
+            if points_val >= 400 and points_val > 0 and len(username) > 2:
+                offers.append({
+                    "site": "apucash",
+                    "username": username,
+                    "points": f"{points_val} points",
+                    "points_val": points_val,
+                    "offer_name": "Offer Completed",
+                    "time": "Just now"
+                })
+                print(f"  ✓ {username} - {points_val} points (400+)")
+        
+        # প্যাটার্ন 2: ডলার সাইন সহ
+        pattern2 = r'([A-Za-z0-9_]{3,25}).*?[\$](\d+(?:\.\d+)?)'
+        matches2 = re.findall(pattern2, text, re.I)
+        
+        for username, points in matches2:
+            dollar_val = float(points)
+            points_val = dollar_val * 100
+            already_added = any(o['username'] == username for o in offers)
+            if not already_added and points_val >= 400 and points_val > 0:
+                offers.append({
+                    "site": "apucash",
+                    "username": username,
+                    "points": f"${dollar_val} (approx {points_val:.0f} points)",
+                    "points_val": points_val,
+                    "offer_name": "Offer Completed",
+                    "time": "Just now"
+                })
+                print(f"  ✓ {username} - ${dollar_val} ({points_val:.0f} points)")
+        
+        filtered_offers = [o for o in offers if o['points_val'] >= 400]
+        print(f"✅ ApuCash: {len(filtered_offers)} টি অফার (400+ points)")
+        return filtered_offers
+        
+    except Exception as e:
+        print(f"❌ ApuCash error: {e}")
+        return []
+
+def scrape_cashlyearn():
+    """CashlyEarn স্ক্র্যাপার"""
+    try:
+        print("🔍 CashlyEarn চেক করা হচ্ছে...")
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        res = requests.get(CASHLYEARN_URL, headers=headers, timeout=15)
+        
+        if res.status_code != 200:
+            print(f"⚠️ CashlyEarn HTTP {res.status_code}")
             return []
         
         soup = BeautifulSoup(res.text, "html.parser")
         offers = []
         
-        # পদ্ধতি 1: earning-feed-item ক্লাস
-        items = soup.find_all("div", class_=re.compile(r"earning-feed-item|activity-item|offer-item|live-feed-item"))
+        # বিভিন্ন ক্লাস খোঁজা
+        items = soup.find_all("div", class_=re.compile(r"offer|activity|earning|feed", re.I))
         
-        # পদ্ধতি 2: যদি উপরে না পায়, তাহলে সব div চেক করো
-        if not items:
-            print("Method 1 failed, trying Method 2...")
-            all_divs = soup.find_all("div")
-            items = [div for div in all_divs if div.find(text=re.compile(r"\$\d+|\d+\s*(?:points?|coins?)", re.I))]
-        
-        # পদ্ধতি 3: script ট্যাগে ডাটা খোঁজা
-        if not items:
-            print("Method 2 failed, trying Method 3...")
-            scripts = soup.find_all("script")
-            for script in scripts:
-                if script.string and ('offers' in script.string or 'activities' in script.string):
-                    try:
-                        json_data = re.search(r'\{.*"offers".*\}', script.string, re.DOTALL)
-                        if json_data:
-                            print("Found JSON data in script")
-                    except:
-                        pass
-        
-        print(f"Found {len(items)} potential items on ApuCash")
-        
-        for item in items:
+        for item in items[:30]:
             try:
-                # ইউজারনেম খোঁজা - বিভিন্ন সেলেক্টর চেক
-                username = None
-                username_patterns = [
-                    ('a', {'class': re.compile(r'username|user-name|profile', re.I)}),
-                    ('span', {'class': re.compile(r'username|user-name|name', re.I)}),
-                    ('div', {'class': re.compile(r'username|user', re.I)}),
-                    ('h6', {}),
-                    ('p', {'class': re.compile(r'name|user', re.I)}),
-                    ('strong', {})
-                ]
-                
-                for tag, attrs in username_patterns:
-                    elem = item.find(tag, attrs) if attrs else item.find(tag)
-                    if elem and elem.get_text(strip=True):
-                        username = elem.get_text(strip=True)
-                        break
-                
-                if not username:
-                    # টেক্সট থেকে ইউজারনেম বের করার চেষ্টা
-                    text = item.get_text()
-                    username_match = re.search(r'@?([A-Za-z0-9_]{3,20})', text)
-                    if username_match:
-                        username = username_match.group(1)
-                    else:
-                        continue  # এই আইটেম স্কিপ
+                # ইউজারনেম খোঁজা
+                username_elem = item.find(["a", "span", "div"], class_=re.compile(r"user|name|username", re.I))
+                username = username_elem.get_text(strip=True) if username_elem else "?"
                 
                 # পয়েন্টস খোঁজা
-                points_val = 0
-                points_str = None
-                
-                points_patterns = [
-                    ('span', {'class': re.compile(r'points|amount|reward|coin', re.I)}),
-                    ('div', {'class': re.compile(r'points|amount|reward', re.I)}),
-                    ('p', {'class': re.compile(r'points', re.I)}),
-                    ('b', {}),
-                    ('strong', {})
-                ]
-                
-                for tag, attrs in points_patterns:
-                    elem = item.find(tag, attrs) if attrs else item.find(tag)
-                    if elem:
-                        text = elem.get_text(strip=True)
-                        # বিভিন্ন ফরম্যাটে পয়েন্টস বের করা
-                        match = re.search(r'[\$€£]?(\d+(?:\.\d+)?)\s*(?:points?|coins?|pts?)', text, re.I)
-                        if not match:
-                            match = re.search(r'(\d+(?:\.\d+)?)\s*\$', text)
-                        if not match:
-                            match = re.search(r'(\d+(?:\.\d+)?)', text)
-                        
-                        if match:
-                            points_val = float(match.group(1))
-                            points_str = match.group(0)
-                            break
-                
-                if points_val == 0:
-                    # পুরো টেক্সট থেকে খোঁজা
-                    text = item.get_text()
-                    match = re.search(r'[\$€£]?(\d+(?:\.\d+)?)\s*(?:points?|coins?)', text, re.I)
-                    if match:
-                        points_val = float(match.group(1))
-                        points_str = match.group(0)
-                    else:
-                        match = re.search(r'(\d+(?:\.\d+)?)\s*\$', text)
-                        if match:
-                            points_val = float(match.group(1))
-                            points_str = f"${points_val}"
-                
-                # মিনিমাম পয়েন্টস চেক
-                if points_val >= MIN_POINTS and points_val > 0:
-                    # অফার নেম খোঁজা
-                    offer_name = "Activity"
-                    title_elem = item.find(['h3', 'h4', 'h5', 'div', 'span'], 
-                                          class_=re.compile(r'title|offer|name|description', re.I))
-                    if title_elem:
-                        offer_name = title_elem.get_text(strip=True)[:60]
-                    else:
-                        # প্রথম লাইনটি নাও
-                        lines = item.get_text().strip().split('\n')
-                        if lines and len(lines[0]) > 5:
-                            offer_name = lines[0][:60]
-                    
-                    # সময় খোঁজা (যদি থাকে)
-                    time_ago = ""
-                    time_elem = item.find('span', class_=re.compile(r'time|ago|date', re.I))
-                    if time_elem:
-                        time_ago = time_elem.get_text(strip=True)
-                    
-                    offers.append({
-                        "site": "apucash",
-                        "username": username[:30],
-                        "points": points_str or f"{points_val} points",
-                        "points_val": points_val,
-                        "offer_name": offer_name,
-                        "time": time_ago,
-                        "is_public": True
-                    })
-                    
-                    print(f"✓ Found: {username} - {points_str}")
-                    
-            except Exception as e:
-                continue
-        
-        print(f"ApuCash total offers found: {len(offers)}")
-        return offers
-        
-    except requests.exceptions.Timeout:
-        print("ApuCash timeout - site is slow")
-        return []
-    except requests.exceptions.ConnectionError:
-        print("ApuCash connection error - site may be down")
-        return []
-    except Exception as e:
-        print(f"ApuCash critical error: {type(e).__name__}: {e}")
-        return []
-
-def scrape_cashlyearn():
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
-        res = requests.get(CASHLYEARN_URL, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
-        offers = []
-        
-        # CashlyEarn এর স্ট্রাকচার অনুযায়ী সেলেক্টর
-        items = soup.find_all("div", class_=re.compile(r"offer|activity|earning", re.I))
-        
-        for item in items[:30]:  # লিমিট ৩০
-            try:
-                # ইউজারনেম
-                username_elem = item.find(["a", "span", "div"], class_=re.compile(r"user|name", re.I))
-                username = username_elem.get_text(strip=True) if username_elem else "Unknown"
-                
-                # পয়েন্টস
                 points_elem = item.find(["span", "div", "b"], class_=re.compile(r"points|amount|reward", re.I))
                 if points_elem:
                     points_text = points_elem.get_text(strip=True)
@@ -272,32 +179,97 @@ def scrape_cashlyearn():
                             "site": "cashlyearn",
                             "username": username[:30],
                             "points": points_text,
-                            "points_val": points_val
+                            "points_val": points_val,
+                            "offer_name": "Activity"
                         })
+                        print(f"  ✓ {username} - {points_text}")
             except:
                 continue
         
-        print(f"CashlyEarn offers: {len(offers)}")
+        print(f"✅ CashlyEarn: {len(offers)} টি অফার")
         return offers
     except Exception as e:
-        print(f"CashlyEarn error: {e}")
+        print(f"❌ CashlyEarn error: {e}")
         return []
 
 def scrape_paidcash():
+    """PaidCash স্ক্র্যাপার - সম্পূর্ণ আপডেটেড ভার্সন"""
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        res = requests.get(PAIDCASH_URL, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
+        print("🔍 PaidCash চেক করা হচ্ছে...")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0",
+        }
+        
+        response = requests.get(PAIDCASH_URL, headers=headers, timeout=20)
+        
+        if response.status_code != 200:
+            print(f"⚠️ PaidCash HTTP {response.status_code}")
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
         offers = []
         
+        # পদ্ধতি 1: earning-feed-item ক্লাস
         items = soup.find_all("div", class_="earning-feed-item")
         
+        # পদ্ধতি 2: অন্যান্য সম্ভাব্য ক্লাস
+        if not items:
+            items = soup.find_all("div", class_=re.compile(r"(feed-item|offer-item|activity-item)", re.I))
+        
+        # পদ্ধতি 3: সরাসরি টেক্সট পার্সিং (Regex)
+        if not items:
+            print("  HTML পার্সিং fail, Regex পদ্ধতি ব্যবহার করা হচ্ছে...")
+            text = response.text
+            
+            # প্যাটার্ন সমূহ
+            patterns = [
+                r'([A-Za-z0-9_@]{3,25})\s+(?:earned|got|received)\s+(\d+)\s+(?:points?|coins?)\s+(?:from|on)\s+([A-Za-z\s]+?)(?:\s|$|\.)',
+                r'([A-Za-z0-9_@]{3,25}).*?(\d+)\s+points?.*?(?:offerwall|wall)\s+([A-Za-z\s]+?)(?:\s|$)',
+                r'\$(\d+(?:\.\d+)?)\s+(?:earned|got).*?([A-Za-z0-9_@]{3,25}).*?(?:from|on)\s+([A-Za-z\s]+?)(?:\s|$)',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, text, re.I)
+                for match in matches:
+                    try:
+                        if len(match) == 3:
+                            if match[0].replace('.', '').isdigit() or match[0].startswith('$'):
+                                points_val = float(match[0].replace('$', '')) if match[0].replace('$', '').replace('.', '').isdigit() else 0
+                                username = match[1]
+                                offerwall = match[2]
+                            else:
+                                username = match[0]
+                                points_val = float(match[1]) if match[1].isdigit() else 0
+                                offerwall = match[2]
+                            
+                            if points_val >= PAIDCASH_MIN_POINTS and points_val > 0:
+                                is_survey = any(keyword in offerwall.lower() for keyword in SURVEY_WALLS_BLOCKLIST)
+                                if not is_survey:
+                                    offers.append({
+                                        "site": "paidcash",
+                                        "username": username[:40],
+                                        "points": f"{points_val} points",
+                                        "points_val": points_val,
+                                        "offerwall": offerwall.strip()[:50],
+                                        "offer_name": offerwall.strip()[:50]
+                                    })
+                                    print(f"  ✓ Regex: {username} - {points_val} points")
+                    except:
+                        continue
+        
+        # পদ্ধতি 4: earning-feed-item থেকে ডাটা নেওয়া
         for item in items:
             try:
                 title_elem = item.find("p", class_="earning-feed-item-content-title")
                 offerwall = title_elem.get_text(strip=True).lower() if title_elem else ""
                 
-                # Survey Walls বাদ দেওয়া
                 is_survey_wall = any(keyword in offerwall for keyword in SURVEY_WALLS_BLOCKLIST)
                 if is_survey_wall:
                     continue
@@ -309,31 +281,36 @@ def scrape_paidcash():
                 points_str = points_elem.get_text(strip=True) if points_elem else "0"
                 points_val = float(re.sub(r'[^\d.]', '', points_str)) if points_str else 0
                 
-                # PaidCash-এর জন্য ২০০ পয়েন্টস ফিল্টার
-                if points_val < PAIDCASH_MIN_POINTS:
-                    continue
-                
-                offer_name = "?"
-                parent = item.find_parent("div", class_=re.compile(r"earnFeed-item|feed-item"))
-                if parent:
-                    offer_name = parent.get("data-offer-name", "")
-                
-                offers.append({
-                    "site": "paidcash",
-                    "offerwall": title_elem.get_text(strip=True) if title_elem else "?",
-                    "username": username,
-                    "offer_name": offer_name,
-                    "points": points_str,
-                    "points_val": points_val,
-                    "is_public": True
-                })
+                if points_val >= PAIDCASH_MIN_POINTS and points_val > 0:
+                    offer_name = title_elem.get_text(strip=True) if title_elem else "?"
+                    
+                    offers.append({
+                        "site": "paidcash",
+                        "offerwall": title_elem.get_text(strip=True) if title_elem else "?",
+                        "username": username,
+                        "offer_name": offer_name,
+                        "points": points_str,
+                        "points_val": points_val,
+                        "is_public": True
+                    })
+                    print(f"  ✓ HTML: {username} - {points_str} ({offerwall[:30]})")
             except:
                 continue
         
-        print(f"Paidcash offers (min {PAIDCASH_MIN_POINTS} pts): {len(offers)}")
-        return offers
+        # ডুপ্লিকেট রিমুভ
+        unique_offers = []
+        seen = set()
+        for offer in offers:
+            key = f"{offer.get('username', '')}_{offer.get('points_val', 0)}"
+            if key not in seen:
+                seen.add(key)
+                unique_offers.append(offer)
+        
+        print(f"✅ PaidCash: {len(unique_offers)} টি অফার (min {PAIDCASH_MIN_POINTS} points)")
+        return unique_offers
+        
     except Exception as e:
-        print(f"Paidcash error: {e}")
+        print(f"❌ PaidCash error: {e}")
         return []
 
 def scrape_splitdrop():
@@ -378,7 +355,7 @@ def make_key(offer):
         raw = f"apu_{offer.get('username', '')}_{offer.get('offer_name', '')}_{offer.get('points_val', 0)}"
         return "apu_" + hashlib.md5(raw.encode()).hexdigest()[:12]
     elif site == "paidcash":
-        raw = f"pc_{offer.get('offerwall', '')}_{offer.get('username', '')}_{offer.get('points_val', 0)}"
+        raw = f"pc_{offer.get('username', '')}_{offer.get('offerwall', '')}_{offer.get('points_val', 0)}"
         return "pc_" + hashlib.md5(raw.encode()).hexdigest()[:10]
     elif site == "splitdrop":
         raw = f"sd_{offer.get('offer_name', '')}_{offer.get('points_val', 0)}"
@@ -395,97 +372,109 @@ def make_key(offer):
 
 def main():
     print("="*60)
-    print("✅ Combined Offer Notifier চালু হয়েছে...")
+    print("✅ Live Offer Notifier চালু হয়েছে...")
+    print("🎯 মনিটরিং সাইট সমূহ:")
+    print("  🔴 Huntskin")
+    print("  🟢 ApuCash (400+ points)")
+    print("  🔵 CashlyEarn")
+    print("  🟠 SplitDrop ($3+)")
+    print("  🪙 PaidCash (200+ coins)")
     print("="*60)
-    
-    # বট টোকেন চেক
-    if BOT_TOKEN == "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo":
-        print("⚠️ Notice: You're using the old bot token. It may be expired.")
-        print("⚠️ If notifications don't work, create a new bot from @BotFather")
     
     send_telegram(
         "✅ <b>Live Offer Notifier চালু হয়েছে!</b>\n\n"
-        "🎯 Monitoring:\n"
+        "🎯 মনিটরিং:\n"
         "🔴 Huntskin\n"
-        "🟢 ApuCash (আপডেটেড - বাগ ফিক্স করা হয়েছে)\n"
+        "🟢 ApuCash <b>(শুধু 400+ পয়েন্টস)</b>\n"
         "🔵 CashlyEarn\n"
         "🟠 SplitDrop (min $3)\n"
         "🪙 PaidCash (min 200 coins)\n\n"
-        f"{'⚡ Min Points Filter: ' + str(MIN_POINTS) if MIN_POINTS > 0 else '✅ সব offers দেখাবে'}\n"
-        f"💰 SplitDrop minimum: ${SPLITDROP_MIN}\n"
-        f"🪙 PaidCash minimum: {PAIDCASH_MIN_POINTS} coins"
+        f"💰 ApuCash মিনিমাম: <b>400 পয়েন্টস</b>\n"
+        f"💰 SplitDrop মিনিমাম: ${SPLITDROP_MIN}\n"
+        f"🪙 PaidCash মিনিমাম: {PAIDCASH_MIN_POINTS} coins"
     )
 
     seen = load_seen()
-    print(f"📚 Loaded {len(seen)} seen offers")
+    print(f"📚 লোড করা হয়েছে {len(seen)} টি পুরাতন অফার")
     
     while True:
-        print(f"\n🔍 Checking at {time.strftime('%H:%M:%S')}")
-        
-        # সব সাইট থেকে অফার সংগ্রহ
-        all_offers = []
-        all_offers += scrape_huntskin()
-        all_offers += scrape_apucash()  # আপডেটেড ভার্সন
-        all_offers += scrape_cashlyearn()
-        all_offers += scrape_splitdrop()
-        all_offers += scrape_paidcash()
+        try:
+            print(f"\n🔍 চেক করছি... {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # সব সাইট থেকে অফার সংগ্রহ
+            all_offers = []
+            all_offers += scrape_huntskin()
+            all_offers += scrape_apucash()
+            all_offers += scrape_cashlyearn()
+            all_offers += scrape_splitdrop()
+            all_offers += scrape_paidcash()
 
-        new_count = 0
-        for offer in all_offers:
-            key = make_key(offer)
-            if key not in seen:
-                seen.add(key)
-                new_count += 1
-                site = offer.get('site', '')
-                
-                if site == "apucash":
-                    msg = (
-                        f"🟢 <b>ApuCash Activity!</b>\n\n"
-                        f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
-                        f"💰 <b>Points:</b> {offer.get('points', '?')}\n"
-                        f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
-                        f"⏱ <b>Time:</b> {offer.get('time', 'Just now')}"
-                    )
-                elif site == "paidcash":
-                    msg = (
-                        f"🪙 <b>PaidCash Activity!</b>\n\n"
-                        f"🏢 <b>Offerwall:</b> {offer.get('offerwall', '?')}\n"
-                        f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
-                        f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
-                        f"💰 <b>Points:</b> {offer.get('points', '?')}"
-                    )
-                elif site == "splitdrop":
-                    msg = (
-                        f"🟠 <b>SplitDrop (${SPLITDROP_MIN}+ Offer)</b>\n\n"
-                        f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
-                        f"💰 <b>Reward:</b> {offer.get('points', '?')}"
-                    )
-                elif site == "huntskin":
-                    msg = (
-                        f"🔴 <b>Huntskin New Offer!</b>\n\n"
-                        f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
-                        f"💰 <b>Points:</b> {offer.get('points', '?')}\n"
-                        f"📋 <b>Type:</b> {offer.get('type', '?')}"
-                    )
-                else:  # cashlyearn
-                    msg = (
-                        f"🔵 <b>CashlyEarn Activity!</b>\n\n"
-                        f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
-                        f"💰 <b>Reward:</b> {offer.get('points', '?')}"
-                    )
+            new_count = 0
+            for offer in all_offers:
+                key = make_key(offer)
+                if key not in seen:
+                    seen.add(key)
+                    new_count += 1
+                    site = offer.get('site', '')
+                    
+                    if site == "apucash":
+                        msg = (
+                            f"🟢 <b>ApuCash Activity! (400+ points)</b>\n\n"
+                            f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
+                            f"💰 <b>Points:</b> {offer.get('points', '?')}\n"
+                            f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
+                            f"⏱ <b>Time:</b> {offer.get('time', 'Just now')}"
+                        )
+                    elif site == "paidcash":
+                        msg = (
+                            f"🪙 <b>PaidCash Activity!</b>\n\n"
+                            f"🏢 <b>Offerwall:</b> {offer.get('offerwall', '?')}\n"
+                            f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
+                            f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
+                            f"💰 <b>Points:</b> {offer.get('points', '?')}"
+                        )
+                    elif site == "splitdrop":
+                        msg = (
+                            f"🟠 <b>SplitDrop (${SPLITDROP_MIN}+ Offer)</b>\n\n"
+                            f"📋 <b>Offer:</b> {offer.get('offer_name', '?')}\n"
+                            f"💰 <b>Reward:</b> {offer.get('points', '?')}"
+                        )
+                    elif site == "huntskin":
+                        msg = (
+                            f"🔴 <b>Huntskin New Offer!</b>\n\n"
+                            f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
+                            f"💰 <b>Points:</b> {offer.get('points', '?')}\n"
+                            f"📋 <b>Type:</b> {offer.get('type', '?')}"
+                        )
+                    else:  # cashlyearn
+                        msg = (
+                            f"🔵 <b>CashlyEarn Activity!</b>\n\n"
+                            f"👤 <b>Username:</b> {offer.get('username', '?')}\n"
+                            f"💰 <b>Reward:</b> {offer.get('points', '?')}"
+                        )
 
-                if send_telegram(msg):
-                    print(f"📨 Sent: [{site}] {offer.get('username', offer.get('offer_name', '?'))} - {offer.get('points', '?')}")
-                else:
-                    print(f"❌ Failed to send: {offer.get('username', '?')}")
-                
-                time.sleep(0.5)  # স্প্যাম এভয়েড
+                    if send_telegram(msg):
+                        print(f"📨 নোটিফিকেশন পাঠানো হয়েছে: [{site}] {offer.get('username', offer.get('offer_name', '?'))} - {offer.get('points', '?')}")
+                    else:
+                        print(f"❌ নোটিফিকেশন পাঠাতে ব্যর্থ: {offer.get('username', '?')}")
+                    
+                    time.sleep(0.5)  # স্প্যাম এভয়েড
 
-        if new_count == 0:
-            print("📭 No new offers found")
+            if new_count == 0:
+                print("📭 কোনো নতুন অফার পাওয়া যায়নি")
+            else:
+                print(f"✨ {new_count} টি নতুন অফার পাওয়া গেছে এবং নোটিফিকেশন পাঠানো হয়েছে")
 
-        save_seen(seen)
-        time.sleep(CHECK_INTERVAL)
+            save_seen(seen)
+            time.sleep(CHECK_INTERVAL)
+            
+        except KeyboardInterrupt:
+            print("\n🛑 বন্ধ করা হচ্ছে...")
+            send_telegram("🛑 Live Offer Notifier বন্ধ করা হয়েছে।")
+            break
+        except Exception as e:
+            print(f"❌ মেইন লুপে এরর: {e}")
+            time.sleep(30)
 
 if __name__ == "__main__":
     main()
