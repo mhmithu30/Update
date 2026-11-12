@@ -1,2 +1,4 @@
-# Google service account key - never commit
-service_account.json
+# 2FA setup keys written by cpanel_2fa_bot.py - never commit
+cpanel_2fa_secrets.json
+cpanel_2fa_secrets.json.tmp
+__pycache__/
